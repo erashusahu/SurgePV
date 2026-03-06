@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="Three.js 3D Measurement Tool — click two points to measure distances in a 3D scene" />
+  <title>3D Measurement Tool</title>
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📏</text></svg>" />
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <h1>📐 3D Measure</h1>
+    <div class="divider"></div>
+    <button id="measure-btn" class="btn">📏 Measure</button>
+    <button id="clear-btn" class="btn btn-danger">🗑 Clear All</button>
+    <div class="divider"></div>
+
+    <!-- Add Figure Dropdown -->
+    <div class="dropdown">
+      <button class="btn btn-add">➕ Add Figure ▾</button>
+      <div class="dropdown-menu">
+        <button id="add-box" class="dropdown-item">📦 Box</button>
+        <button id="add-sphere" class="dropdown-item">⚽ Sphere</button>
+        <button id="add-cylinder" class="dropdown-item">🛢 Cylinder</button>
+        <button id="add-cone" class="dropdown-item">🔺 Cone</button>
+        <button id="add-torus" class="dropdown-item">🍩 Torus</button>
+      </div>
+    </div>
+
+    <button id="remove-shape-btn" class="btn btn-danger" style="margin-left: 8px;">🗑 Remove Shape</button>
+  </div>
+
+  <!-- Info Badges (top-right) -->
+  <div class="info-badges-container">
+    <div class="info-badge">
+      <span class="label">Measurements</span>
+      <span class="value" id="count">0</span>
+    </div>
+    <div class="info-badge">
+      <span class="label">Unit</span>
+      <span class="value" id="unit-display">M</span>
+    </div>
+  </div>
+
+  <!-- Selection Info -->
+  <div id="selection-info" class="selection-panel" style="display:none;">
+    <span class="selection-title">✏️ Selected</span>
+    <span class="key-hint"><kbd>E</kbd> Erase</span>
+    <span class="key-hint"><kbd>M</kbd> Change Unit</span>
+    <span class="key-hint"><kbd>ESC</kbd> Deselect</span>
+  </div>
+
+  <!-- Keyboard Shortcuts (bottom-left) -->
+  <div class="shortcuts-panel">
+    <div class="shortcut-title">Shortcuts</div>
+    <div class="shortcut-row"><kbd>E</kbd> Erase selected</div>
+    <div class="shortcut-row"><kbd>M</kbd> Unit (selected)</div>
+    <div class="shortcut-row"><kbd>C</kbd> Unit (all)</div>
+    <div class="shortcut-row"><kbd>ESC</kbd> Cancel / Deselect</div>
+  </div>
+
+  <!-- Status Bar -->
+  <div class="status-panel">
+    <span id="status" class="status-badge inactive">Inactive</span>
+    <span id="instruction" class="instruction-text">Click "Measure" to start</span>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>
