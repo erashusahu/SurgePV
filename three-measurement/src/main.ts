@@ -1,5 +1,6 @@
 import { scene, camera, renderer, groundPlane, animate, addFigure, removeFigure } from './scene';
 import { MeasurementSystem } from './MeasurementSystem';
+import { isMeasurementObject, invalidateVertexCache, throttle } from './utils';
 import * as THREE from 'three';
 import './style.css';
 
@@ -35,17 +36,7 @@ function getWorldPosition(event: MouseEvent): THREE.Vector3 | null {
 
   // Find the closest solid object (shape) that isn't a measurement or ground
   for (const hit of intersects) {
-    // Skip measurement-related objects (lines, sprites, markers)
-    let parent: THREE.Object3D | null = hit.object;
-    let isMeasurement = false;
-    while (parent) {
-      if (parent.name === 'measurement' || parent.name === 'snap-indicator') {
-        isMeasurement = true;
-        break;
-      }
-      parent = parent.parent;
-    }
-    if (isMeasurement) continue;
+    if (isMeasurementObject(hit.object)) continue;
 
     // Skip the ground plane — we'll use it as fallback
     if (hit.object === groundPlane) continue;
@@ -74,23 +65,15 @@ renderer.domElement.addEventListener('click', (event: MouseEvent) => {
     const intersects = raycaster.intersectObjects(scene.children, true);
 
     for (const hit of intersects) {
-      // Skip measurement objects
-      let parent: THREE.Object3D | null = hit.object;
-      let isMeasurement = false;
-      while (parent) {
-        if (parent.name === 'measurement' || parent.name === 'snap-indicator') {
-          isMeasurement = true;
-          break;
-        }
-        parent = parent.parent;
-      }
-      if (isMeasurement) continue;
+      if (isMeasurementObject(hit.object)) continue;
 
       // Skip ground
       if (hit.object === groundPlane) continue;
 
       // Hit a valid shape! Remove it.
-      removeFigure(hit.object as THREE.Mesh);
+      const target = hit.object as THREE.Mesh;
+      invalidateVertexCache(target);
+      removeFigure(target);
       updateStatus();
       break;
     }
@@ -111,14 +94,14 @@ renderer.domElement.addEventListener('click', (event: MouseEvent) => {
   }
 });
 
-renderer.domElement.addEventListener('mousemove', (event: MouseEvent) => {
+renderer.domElement.addEventListener('mousemove', throttle((event: MouseEvent) => {
   if (!measurementSystem.active) return;
 
   const point = getWorldPosition(event);
   if (point) {
     measurementSystem.handleMouseMove(point);
   }
-});
+}, 16));
 
 // ─── Keyboard Events ────────────────────────────────────────────────────────
 window.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -209,7 +192,8 @@ figureTypes.forEach((type) => {
   const btn = document.getElementById(`add-${type}`);
   if (btn) {
     btn.addEventListener('click', () => {
-      addFigure(type);
+      const mesh = addFigure(type);
+      invalidateVertexCache(mesh);
     });
   }
 });

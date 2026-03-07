@@ -47,6 +47,10 @@ export class MeasurementSystem {
     // Shared geometries
     private markerGeometry!: THREE.SphereGeometry;
     private snapGeometry!: THREE.SphereGeometry;
+    private arrowGeometry!: THREE.ConeGeometry;
+
+    // Set of shared resources that must NOT be disposed when removing individual measurements
+    private sharedResources!: Set<THREE.Material | THREE.BufferGeometry>;
 
     // Callback for status updates
     public onStatusChange: (() => void) | null = null;
@@ -102,8 +106,23 @@ export class MeasurementSystem {
             linewidth: 3,
         });
 
-        this.markerGeometry = new THREE.SphereGeometry(0.12, 16, 16);
-        this.snapGeometry = new THREE.SphereGeometry(0.18, 16, 16);
+        this.markerGeometry = new THREE.SphereGeometry(0.12, 12, 12);
+        this.snapGeometry = new THREE.SphereGeometry(0.18, 12, 12);
+        this.arrowGeometry = new THREE.ConeGeometry(0.1, 0.3, 8);
+
+        this.sharedResources = new Set([
+            this.dimensionLineMaterial,
+            this.previewLineMaterial,
+            this.arrowMaterial,
+            this.markerMaterial,
+            this.cursorMaterial,
+            this.extensionLineMaterial,
+            this.snapMaterial,
+            this.selectedHighlightMaterial,
+            this.markerGeometry,
+            this.snapGeometry,
+            this.arrowGeometry,
+        ]);
     }
 
     // ─── Activate / Deactivate ───────────────────────────────────────────────
@@ -198,11 +217,16 @@ export class MeasurementSystem {
             this.startMarker.position.copy(this.startPoint);
             this.scene.add(this.startMarker);
 
-            // Preview dashed line
-            const geometry = new THREE.BufferGeometry().setFromPoints([
-                this.startPoint,
-                this.startPoint.clone(),
-            ]);
+            // Preview dashed line — pre-allocate buffer for 2 points
+            const positions = new Float32Array(6);
+            positions[0] = this.startPoint.x;
+            positions[1] = this.startPoint.y;
+            positions[2] = this.startPoint.z;
+            positions[3] = this.startPoint.x;
+            positions[4] = this.startPoint.y;
+            positions[5] = this.startPoint.z;
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             this.previewLine = new THREE.Line(geometry, this.previewLineMaterial);
             this.previewLine.computeLineDistances();
             this.scene.add(this.previewLine);
@@ -242,10 +266,15 @@ export class MeasurementSystem {
         // Use snapped or raw position for preview
         const effectivePos = snapped || worldPosition;
 
-        // Update preview line endpoint
+        // Update preview line endpoint — reuse existing buffer to avoid allocation
         if (this.isMeasuring && this.previewLine && this.startPoint) {
-            const points = [this.startPoint, effectivePos];
-            this.previewLine.geometry.setFromPoints(points);
+            const posAttr = this.previewLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+            const arr = posAttr.array as Float32Array;
+            arr[3] = effectivePos.x;
+            arr[4] = effectivePos.y;
+            arr[5] = effectivePos.z;
+            posAttr.needsUpdate = true;
+            this.previewLine.geometry.computeBoundingSphere();
             this.previewLine.computeLineDistances();
         }
     }
@@ -434,8 +463,7 @@ export class MeasurementSystem {
 
     // ─── Arrowhead ───────────────────────────────────────────────────────────
     private createArrowHead(position: THREE.Vector3, direction: THREE.Vector3): THREE.Mesh {
-        const coneGeo = new THREE.ConeGeometry(0.1, 0.3, 8);
-        const cone = new THREE.Mesh(coneGeo, this.arrowMaterial);
+        const cone = new THREE.Mesh(this.arrowGeometry, this.arrowMaterial);
 
         cone.position.copy(position);
 
@@ -480,17 +508,17 @@ export class MeasurementSystem {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d')!;
 
-        canvas.width = 1024;
-        canvas.height = 256;
+        canvas.width = 512;
+        canvas.height = 128;
 
         // Shadow / glow effect
         ctx.shadowColor = '#00e5ff';
-        ctx.shadowBlur = 20;
+        ctx.shadowBlur = 10;
 
         // Background with rounded rect
         ctx.fillStyle = 'rgba(10, 10, 30, 0.92)';
-        const radius = 28;
-        const pad = 12;
+        const radius = 14;
+        const pad = 6;
         ctx.beginPath();
         ctx.moveTo(pad + radius, pad);
         ctx.lineTo(canvas.width - pad - radius, pad);
@@ -510,13 +538,13 @@ export class MeasurementSystem {
         ctx.lineWidth = 5;
         ctx.stroke();
 
-        // Distance text — BIG, BOLD, WHITE
+        // Distance text — BOLD, WHITE
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 80px "Segoe UI", Arial, sans-serif';
+        ctx.font = 'bold 44px "Segoe UI", Arial, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.shadowColor = '#00e5ff';
-        ctx.shadowBlur = 12;
+        ctx.shadowBlur = 6;
         ctx.fillText(text, canvas.width / 2, canvas.height / 2);
 
         const texture = new THREE.CanvasTexture(canvas);
@@ -541,7 +569,7 @@ export class MeasurementSystem {
         this.deselectMeasurement();
         this.measurements.forEach((m) => {
             this.scene.remove(m.lineGroup);
-            disposeObject(m.lineGroup);
+            disposeObject(m.lineGroup, this.sharedResources);
         });
         this.measurements.clear();
     }
@@ -551,7 +579,7 @@ export class MeasurementSystem {
         const m = this.measurements.get(id);
         if (m) {
             this.scene.remove(m.lineGroup);
-            disposeObject(m.lineGroup);
+            disposeObject(m.lineGroup, this.sharedResources);
             this.measurements.delete(id);
         }
     }
@@ -573,5 +601,6 @@ export class MeasurementSystem {
         this.selectedHighlightMaterial.dispose();
         this.markerGeometry.dispose();
         this.snapGeometry.dispose();
+        this.arrowGeometry.dispose();
     }
 }

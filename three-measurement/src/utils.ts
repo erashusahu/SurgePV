@@ -47,94 +47,160 @@ export function generateId(): string {
     return `measurement_${Date.now()}_${++_idCounter}`;
 }
 
+// ─── Shared Helper: Measurement Object Detection ────────────────────────────
+/**
+ * Check if a Three.js object (or any ancestor) is a measurement/snap-indicator.
+ * Replaces duplicated parent-walk logic used in 3+ places.
+ */
+export function isMeasurementObject(obj: THREE.Object3D): boolean {
+    let current: THREE.Object3D | null = obj;
+    while (current) {
+        if (current.name === 'measurement' || current.name === 'snap-indicator') {
+            return true;
+        }
+        current = current.parent;
+    }
+    return false;
+}
+
 /**
  * Recursively dispose all geometries, materials, and textures in a Three.js object.
- * This is critical for preventing GPU memory leaks.
+ * Accepts an optional set of shared resources to skip (preventing double-dispose bugs).
  */
-export function disposeObject(obj: THREE.Object3D): void {
+export function disposeObject(
+    obj: THREE.Object3D,
+    sharedResources?: Set<THREE.Material | THREE.BufferGeometry>
+): void {
     obj.traverse((child: any) => {
         if (child.geometry) {
-            child.geometry.dispose();
+            if (!sharedResources || !sharedResources.has(child.geometry)) {
+                child.geometry.dispose();
+            }
         }
         if (child.material) {
-            if (Array.isArray(child.material)) {
-                child.material.forEach((m: THREE.Material & { map?: THREE.Texture }) => {
-                    if (m.map) m.map.dispose();
-                    m.dispose();
-                });
-            } else {
-                if (child.material.map) child.material.map.dispose();
-                child.material.dispose();
+            const materials: (THREE.Material & { map?: THREE.Texture })[] = Array.isArray(child.material)
+                ? child.material
+                : [child.material];
+            for (const m of materials) {
+                if (sharedResources && sharedResources.has(m)) continue;
+                if (m.map) m.map.dispose();
+                m.dispose();
             }
         }
     });
 }
 
+// ─── Vertex Cache ────────────────────────────────────────────────────────────
+interface CachedVertexData {
+    version: number;
+    matrixWorldVersion: number;
+    vertices: THREE.Vector3[];
+}
+
+const _vertexCache = new WeakMap<THREE.BufferGeometry, CachedVertexData>();
+
 /**
- * Extract world-space vertex positions from a mesh.
- * Used for vertex snapping.
+ * Invalidate cached vertices for a specific mesh, or clear the entire cache.
  */
-export function extractVertices(mesh: THREE.Mesh): THREE.Vector3[] {
-    const vertices: THREE.Vector3[] = [];
-    const geo = mesh.geometry;
-    if (!geo) return vertices;
-
-    const posAttr = geo.getAttribute('position');
-    if (!posAttr) return vertices;
-
-    const seen = new Set<string>();
-
-    for (let i = 0; i < posAttr.count; i++) {
-        const v = new THREE.Vector3().fromBufferAttribute(posAttr, i);
-        // Transform local vertex to world space
-        mesh.localToWorld(v);
-        // Deduplicate (round to 3 decimals)
-        const key = `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            vertices.push(v);
-        }
+export function invalidateVertexCache(mesh?: THREE.Mesh): void {
+    if (mesh && mesh.geometry) {
+        _vertexCache.delete(mesh.geometry);
     }
-
-    return vertices;
 }
 
 /**
+ * Extract world-space vertex positions from a mesh.
+ * Results are cached per geometry version + world matrix to avoid re-computation.
+ */
+export function extractVertices(mesh: THREE.Mesh): THREE.Vector3[] {
+    const geo = mesh.geometry;
+    if (!geo) return [];
+
+    const posAttr = geo.getAttribute('position');
+    if (!posAttr) return [];
+
+    const geoVersion = (geo as any).version ?? (posAttr as any).version ?? 0;
+    // Use a simple hash of the world matrix elements to detect transform changes
+    mesh.updateWorldMatrix(true, false);
+    const me = mesh.matrixWorld.elements;
+    const matHash = me[12] * 1000000 + me[13] * 1000 + me[14];
+
+    const cached = _vertexCache.get(geo);
+    if (cached && cached.version === geoVersion && cached.matrixWorldVersion === matHash) {
+        return cached.vertices;
+    }
+
+    const vertices: THREE.Vector3[] = [];
+    const seen = new Set<string>();
+    const tempV = new THREE.Vector3();
+
+    for (let i = 0; i < posAttr.count; i++) {
+        tempV.fromBufferAttribute(posAttr, i);
+        mesh.localToWorld(tempV);
+        // Deduplicate (round to 3 decimals)
+        const key = `${tempV.x.toFixed(3)},${tempV.y.toFixed(3)},${tempV.z.toFixed(3)}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            vertices.push(tempV.clone());
+        }
+    }
+
+    _vertexCache.set(geo, { version: geoVersion, matrixWorldVersion: matHash, vertices });
+    return vertices;
+}
+
+// Reusable Vector3 for distance checks in findNearestVertex
+const _snapResult = new THREE.Vector3();
+
+/**
  * Find the nearest vertex to a given world point within a snap radius.
- * Returns the snapped vertex or null if none is within range.
+ * Uses cached vertex data and avoids per-call allocations.
  */
 export function findNearestVertex(
     point: THREE.Vector3,
     scene: THREE.Scene,
     snapRadius: number = 0.5
 ): THREE.Vector3 | null {
-    let nearest: THREE.Vector3 | null = null;
-    let minDist = snapRadius;
+    let found = false;
+    let minDistSq = snapRadius * snapRadius;
 
     scene.traverse((obj: THREE.Object3D) => {
-        if (obj instanceof THREE.Mesh && obj.geometry && obj.name !== 'ground') {
-            // Skip measurement-related objects
-            let parent: THREE.Object3D | null = obj;
-            let isMeasurement = false;
-            while (parent) {
-                if (parent.name === 'measurement' || parent.name === 'snap-indicator') {
-                    isMeasurement = true;
-                    break;
-                }
-                parent = parent.parent;
-            }
-            if (isMeasurement) return;
+        if (!(obj instanceof THREE.Mesh) || !obj.geometry || obj.name === 'ground') return;
+        if (isMeasurementObject(obj)) return;
 
-            const verts = extractVertices(obj);
-            for (const v of verts) {
-                const d = point.distanceTo(v);
-                if (d < minDist) {
-                    minDist = d;
-                    nearest = v.clone();
-                }
+        const verts = extractVertices(obj);
+        for (let i = 0, len = verts.length; i < len; i++) {
+            const v = verts[i];
+            const dSq = point.distanceToSquared(v);
+            if (dSq < minDistSq) {
+                minDistSq = dSq;
+                _snapResult.copy(v);
+                found = true;
             }
         }
     });
 
-    return nearest;
+    return found ? _snapResult.clone() : null;
+}
+
+// ─── Throttle Utility ────────────────────────────────────────────────────────
+/**
+ * Throttle a function to run at most once per `limitMs` milliseconds.
+ */
+export function throttle<T extends (...args: any[]) => void>(fn: T, limitMs: number): T {
+    let lastCall = 0;
+    let pendingFrame: number | null = null;
+    return ((...args: any[]) => {
+        const now = performance.now();
+        if (now - lastCall >= limitMs) {
+            lastCall = now;
+            fn(...args);
+        } else if (!pendingFrame) {
+            pendingFrame = requestAnimationFrame(() => {
+                lastCall = performance.now();
+                pendingFrame = null;
+                fn(...args);
+            });
+        }
+    }) as T;
 }
