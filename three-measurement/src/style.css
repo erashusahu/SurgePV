@@ -353,3 +353,154 @@ kbd {
 .shortcut-row kbd {
   color: #00e5ff;
 }
+
+/* ─── Measurement Records Panel ──────────────────────────────────────────── */
+.records-panel {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  width: 340px;
+  max-height: calc(100vh - 140px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 15, 35, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 229, 255, 0.12);
+  border-radius: 12px;
+  z-index: 100;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.records-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.records-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e0e0e0;
+  letter-spacing: 0.3px;
+}
+
+.records-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #00e5ff;
+  background: rgba(0, 229, 255, 0.12);
+  padding: 2px 8px;
+  border-radius: 10px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.records-table-wrap {
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 229, 255, 0.2) transparent;
+}
+
+.records-table-wrap::-webkit-scrollbar {
+  width: 5px;
+}
+
+.records-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 255, 0.2);
+  border-radius: 4px;
+}
+
+.records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.records-table thead th {
+  position: sticky;
+  top: 0;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  background: rgba(15, 15, 35, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.records-table tbody tr {
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.records-table tbody tr:hover {
+  background: rgba(0, 229, 255, 0.06);
+}
+
+.records-table tbody tr.row-selected {
+  background: rgba(255, 214, 0, 0.08);
+}
+
+.records-table tbody td {
+  padding: 8px 10px;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+.records-table tbody td:first-child {
+  color: #666;
+  font-weight: 600;
+  width: 28px;
+}
+
+.records-table .shape-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  color: #aaa;
+}
+
+.records-table .dist-value {
+  color: #00e5ff;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.records-table .row-delete-btn {
+  background: none;
+  border: 1px solid rgba(255, 82, 82, 0.25);
+  border-radius: 4px;
+  color: #ff5252;
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.records-table tbody tr:hover .row-delete-btn {
+  opacity: 1;
+}
+
+.records-table .row-delete-btn:hover {
+  background: rgba(255, 82, 82, 0.15);
+}
+
+.records-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: #555;
+  font-style: italic;
+}

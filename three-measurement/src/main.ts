@@ -222,6 +222,9 @@ const countEl = document.getElementById('count')!;
 const instructionEl = document.getElementById('instruction')!;
 const unitEl = document.getElementById('unit-display')!;
 const selectionInfoEl = document.getElementById('selection-info')!;
+const recordsBody = document.getElementById('records-body')!;
+const recordsCountEl = document.getElementById('records-count')!;
+const recordsEmptyEl = document.getElementById('records-empty')!;
 
 measureBtn.addEventListener('click', () => setMode(AppMode.Measuring));
 removeShapeBtn.addEventListener('click', () => setMode(AppMode.Removing));
@@ -243,10 +246,55 @@ figureTypes.forEach((type) => {
   }
 });
 
+// ─── Records Table ───────────────────────────────────────────────────────────
+function updateRecordsTable(): void {
+  const records = measurementSystem.getMeasurementRecords();
+  const selectedId = measurementSystem.selectedMeasurementId;
+
+  recordsCountEl.textContent = `${records.length}`;
+  recordsEmptyEl.style.display = records.length === 0 ? 'block' : 'none';
+
+  // Clear existing rows
+  recordsBody.innerHTML = '';
+
+  for (const rec of records) {
+    const tr = document.createElement('tr');
+    if (rec.id === selectedId) tr.classList.add('row-selected');
+
+    // Row click → select measurement in 3D
+    tr.addEventListener('click', () => {
+      measurementSystem.selectMeasurement(rec.id);
+      updateStatus();
+    });
+
+    tr.innerHTML = `
+      <td>${rec.index}</td>
+      <td><span class="shape-tag">${rec.startShape}</span></td>
+      <td><span class="shape-tag">${rec.endShape}</span></td>
+      <td><span class="dist-value">${rec.formattedDistance}</span></td>
+      <td></td>
+    `;
+
+    // Delete button (last cell)
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'row-delete-btn';
+    deleteBtn.textContent = '\u2716';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      measurementSystem.removeMeasurement(rec.id);
+      updateStatus();
+    });
+    tr.lastElementChild!.appendChild(deleteBtn);
+
+    recordsBody.appendChild(tr);
+  }
+}
+
 // ─── Status Update ───────────────────────────────────────────────────────────
 function updateStatus(): void {
   countEl.textContent = `${measurementSystem.measurementCount}`;
   unitEl.textContent = measurementSystem.unit.toUpperCase();
+  updateRecordsTable();
 
   const showSelection = currentMode === AppMode.Idle && measurementSystem.hasSelection;
   selectionInfoEl.style.display = showSelection ? 'flex' : 'none';

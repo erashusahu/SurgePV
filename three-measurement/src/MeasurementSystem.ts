@@ -10,6 +10,18 @@ interface MeasurementData {
     distance: number;
     unit: Unit;
     lineGroup: THREE.Group;
+    startShape: string;
+    endShape: string;
+}
+
+export interface MeasurementRecord {
+    id: string;
+    index: number;
+    startShape: string;
+    endShape: string;
+    distance: number;
+    formattedDistance: string;
+    unit: Unit;
 }
 
 // ─── Measurement System ──────────────────────────────────────────────────────
@@ -175,6 +187,50 @@ export class MeasurementSystem {
 
     get selectedMeasurementId(): string | null {
         return this.selectedId;
+    }
+
+    // ─── Table Data ──────────────────────────────────────────────────────────
+    getMeasurementRecords(): MeasurementRecord[] {
+        const records: MeasurementRecord[] = [];
+        let idx = 1;
+        for (const m of this.measurements.values()) {
+            records.push({
+                id: m.id,
+                index: idx++,
+                startShape: m.startShape,
+                endShape: m.endShape,
+                distance: m.distance,
+                formattedDistance: formatDistance(m.distance, m.unit),
+                unit: m.unit,
+            });
+        }
+        return records;
+    }
+
+    private detectShapeName(point: THREE.Vector3): string {
+        let closest = 'Ground';
+        let minDistSq = Infinity;
+        for (const mesh of this.snapTargets) {
+            const dSq = point.distanceToSquared(mesh.position);
+            if (dSq < minDistSq) {
+                minDistSq = dSq;
+                closest = this.geometryTypeName(mesh);
+            }
+        }
+        // Only assign shape if reasonably close (within 5 units)
+        return minDistSq < 25 ? closest : 'Ground';
+    }
+
+    private geometryTypeName(mesh: THREE.Mesh): string {
+        const geo = mesh.geometry;
+        if (!geo) return 'Shape';
+        const type = geo.type;
+        if (type.includes('Box')) return 'Box';
+        if (type.includes('Sphere')) return 'Sphere';
+        if (type.includes('Cylinder')) return 'Cylinder';
+        if (type.includes('Cone')) return 'Cone';
+        if (type.includes('Torus')) return 'Torus';
+        return 'Shape';
     }
 
     // ─── Snap Indicator ─────────────────────────────────────────────────────
@@ -482,6 +538,8 @@ export class MeasurementSystem {
             distance,
             unit: this.currentUnit,
             lineGroup: group,
+            startShape: this.detectShapeName(start),
+            endShape: this.detectShapeName(end),
         });
 
         // Clean up preview state
