@@ -15,10 +15,14 @@ interface MeasurementData {
 // ─── Measurement System ──────────────────────────────────────────────────────
 export class MeasurementSystem {
     private scene: THREE.Scene;
+    private snapTargets: THREE.Mesh[];
     private isActive: boolean = false;
     private isMeasuring: boolean = false;
     private startPoint: THREE.Vector3 | null = null;
     private previewLine: THREE.Line | null = null;
+    private previewLabel: THREE.Sprite | null = null;
+    private previewLabelCanvas: HTMLCanvasElement | null = null;
+    private previewLabelTexture: THREE.CanvasTexture | null = null;
     private startMarker: THREE.Mesh | null = null;
     private cursorMarker: THREE.Mesh | null = null;
     private measurements: Map<string, MeasurementData> = new Map();
@@ -52,11 +56,18 @@ export class MeasurementSystem {
     // Set of shared resources that must NOT be disposed when removing individual measurements
     private sharedResources!: Set<THREE.Material | THREE.BufferGeometry>;
 
+    // Reusable temp objects to avoid per-call allocations
+    private static _tempVec = new THREE.Vector3();
+    private static _tempVec2 = new THREE.Vector3();
+    private static _tempQuat = new THREE.Quaternion();
+    private static _upVec = new THREE.Vector3(0, 1, 0);
+
     // Callback for status updates
     public onStatusChange: (() => void) | null = null;
 
-    constructor(scene: THREE.Scene) {
+    constructor(scene: THREE.Scene, snapTargets: THREE.Mesh[]) {
         this.scene = scene;
+        this.snapTargets = snapTargets;
         this.initMaterials();
     }
 
@@ -240,7 +251,7 @@ export class MeasurementSystem {
         if (!this.isActive) return;
 
         // ── Vertex Snapping ──────────────────────────────────────────────────
-        const snapped = findNearestVertex(worldPosition, this.scene, this.snapRadius);
+        const snapped = findNearestVertex(worldPosition, this.snapTargets, this.snapRadius);
 
         if (snapped) {
             this.snappedPoint = snapped;
@@ -266,7 +277,7 @@ export class MeasurementSystem {
         // Use snapped or raw position for preview
         const effectivePos = snapped || worldPosition;
 
-        // Update preview line endpoint — reuse existing buffer to avoid allocation
+        // Update preview line endpoint + live distance label
         if (this.isMeasuring && this.previewLine && this.startPoint) {
             const posAttr = this.previewLine.geometry.getAttribute('position') as THREE.BufferAttribute;
             const arr = posAttr.array as Float32Array;
@@ -276,6 +287,10 @@ export class MeasurementSystem {
             posAttr.needsUpdate = true;
             this.previewLine.geometry.computeBoundingSphere();
             this.previewLine.computeLineDistances();
+
+            // Live distance preview label
+            const dist = calculateDistance(this.startPoint, effectivePos);
+            this.updatePreviewLabel(dist, this.startPoint, effectivePos);
         }
     }
 
@@ -285,12 +300,69 @@ export class MeasurementSystem {
             this.previewLine.geometry.dispose();
             this.previewLine = null;
         }
+        if (this.previewLabel) {
+            this.scene.remove(this.previewLabel);
+            this.previewLabel = null;
+        }
         if (this.startMarker) {
             this.scene.remove(this.startMarker);
             this.startMarker = null;
         }
         this.startPoint = null;
         this.isMeasuring = false;
+    }
+
+    // ─── Live Preview Label ──────────────────────────────────────────────────
+    private updatePreviewLabel(distance: number, start: THREE.Vector3, end: THREE.Vector3): void {
+        const text = formatDistance(distance, this.currentUnit);
+
+        // Lazy-init reusable canvas + texture + sprite
+        if (!this.previewLabelCanvas) {
+            this.previewLabelCanvas = document.createElement('canvas');
+            this.previewLabelCanvas.width = 256;
+            this.previewLabelCanvas.height = 64;
+        }
+        if (!this.previewLabelTexture) {
+            this.previewLabelTexture = new THREE.CanvasTexture(this.previewLabelCanvas);
+        }
+        if (!this.previewLabel) {
+            const mat = new THREE.SpriteMaterial({
+                map: this.previewLabelTexture,
+                transparent: true,
+                depthTest: false,
+            });
+            this.previewLabel = new THREE.Sprite(mat);
+            this.previewLabel.scale.set(2.5, 0.625, 1);
+            this.scene.add(this.previewLabel);
+        }
+
+        // Repaint canvas
+        const canvas = this.previewLabelCanvas;
+        const ctx = canvas.getContext('2d')!;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = 'rgba(10, 10, 30, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(4, 4, canvas.width - 8, canvas.height - 8, 10);
+        ctx.fill();
+
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 28px "Segoe UI", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+        this.previewLabelTexture.needsUpdate = true;
+
+        // Position at midpoint, offset above line
+        const mid = MeasurementSystem._tempVec;
+        mid.copy(start).lerp(end, 0.5);
+        mid.y += 0.5;
+        this.previewLabel.position.copy(mid);
     }
 
     // ─── Selection ──────────────────────────────────────────────────────────
@@ -464,42 +536,41 @@ export class MeasurementSystem {
     // ─── Arrowhead ───────────────────────────────────────────────────────────
     private createArrowHead(position: THREE.Vector3, direction: THREE.Vector3): THREE.Mesh {
         const cone = new THREE.Mesh(this.arrowGeometry, this.arrowMaterial);
-
         cone.position.copy(position);
 
-        // Orient cone to point in the measurement direction
-        const up = new THREE.Vector3(0, 1, 0);
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
-        cone.quaternion.copy(quaternion);
+        // Orient cone — reuse static temp objects
+        MeasurementSystem._tempQuat.setFromUnitVectors(MeasurementSystem._upVec, direction);
+        cone.quaternion.copy(MeasurementSystem._tempQuat);
 
         return cone;
     }
 
     // ─── Extension Lines ─────────────────────────────────────────────────────
     private createExtensionLines(start: THREE.Vector3, end: THREE.Vector3): THREE.Line[] {
-        const lines: THREE.Line[] = [];
-        const dir = end.clone().sub(start).normalize();
+        const tv = MeasurementSystem._tempVec;
+        const tv2 = MeasurementSystem._tempVec2;
+
+        const dir = tv.copy(end).sub(start).normalize();
 
         // Perpendicular direction (cross with Y-up)
-        let perp = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+        const perp = tv2.crossVectors(dir, MeasurementSystem._upVec).normalize();
         if (perp.lengthSq() < 0.001) {
-            perp = new THREE.Vector3(1, 0, 0);
+            perp.set(1, 0, 0);
         }
 
         const tickLength = 0.3;
+        const lines: THREE.Line[] = [];
 
-        // Start tick
-        const s1 = start.clone().add(perp.clone().multiplyScalar(tickLength));
-        const s2 = start.clone().add(perp.clone().multiplyScalar(-tickLength));
-        const startTickGeo = new THREE.BufferGeometry().setFromPoints([s1, s2]);
-        lines.push(new THREE.Line(startTickGeo, this.extensionLineMaterial));
+        // Helper: build a tick line at a given point
+        const makeTick = (pt: THREE.Vector3): THREE.Line => {
+            const p1 = pt.clone().addScaledVector(perp, tickLength);
+            const p2 = pt.clone().addScaledVector(perp, -tickLength);
+            const geo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+            return new THREE.Line(geo, this.extensionLineMaterial);
+        };
 
-        // End tick
-        const e1 = end.clone().add(perp.clone().multiplyScalar(tickLength));
-        const e2 = end.clone().add(perp.clone().multiplyScalar(-tickLength));
-        const endTickGeo = new THREE.BufferGeometry().setFromPoints([e1, e2]);
-        lines.push(new THREE.Line(endTickGeo, this.extensionLineMaterial));
-
+        lines.push(makeTick(start));
+        lines.push(makeTick(end));
         return lines;
     }
 
@@ -517,25 +588,15 @@ export class MeasurementSystem {
 
         // Background with rounded rect
         ctx.fillStyle = 'rgba(10, 10, 30, 0.92)';
-        const radius = 14;
         const pad = 6;
         ctx.beginPath();
-        ctx.moveTo(pad + radius, pad);
-        ctx.lineTo(canvas.width - pad - radius, pad);
-        ctx.quadraticCurveTo(canvas.width - pad, pad, canvas.width - pad, pad + radius);
-        ctx.lineTo(canvas.width - pad, canvas.height - pad - radius);
-        ctx.quadraticCurveTo(canvas.width - pad, canvas.height - pad, canvas.width - pad - radius, canvas.height - pad);
-        ctx.lineTo(pad + radius, canvas.height - pad);
-        ctx.quadraticCurveTo(pad, canvas.height - pad, pad, canvas.height - pad - radius);
-        ctx.lineTo(pad, pad + radius);
-        ctx.quadraticCurveTo(pad, pad, pad + radius, pad);
-        ctx.closePath();
+        ctx.roundRect(pad, pad, canvas.width - pad * 2, canvas.height - pad * 2, 14);
         ctx.fill();
 
         // Bright border
         ctx.shadowBlur = 0;
         ctx.strokeStyle = '#00e5ff';
-        ctx.lineWidth = 5;
+        ctx.lineWidth = 3;
         ctx.stroke();
 
         // Distance text — BOLD, WHITE

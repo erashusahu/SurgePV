@@ -58,7 +58,7 @@ scene.add(gridHelper);
 
 // ─── Ground Plane (invisible, for raycasting) ────────────────────────────────
 const groundGeometry = new THREE.PlaneGeometry(100, 100);
-const groundMaterial = new THREE.MeshStandardMaterial({
+const groundMaterial = new THREE.MeshBasicMaterial({
     color: 0x16213e,
     transparent: true,
     opacity: 0.0,
@@ -88,7 +88,7 @@ scene.add(box);
 sceneObjects.push(box);
 
 // Sphere
-const sphereGeo = new THREE.SphereGeometry(1.2, 32, 32);
+const sphereGeo = new THREE.SphereGeometry(1.2, 20, 20);
 const sphereMat = new THREE.MeshStandardMaterial({
     color: 0x00d2ff,
     roughness: 0.2,
@@ -101,7 +101,7 @@ scene.add(sphere);
 sceneObjects.push(sphere);
 
 // Cylinder
-const cylGeo = new THREE.CylinderGeometry(0.8, 0.8, 3, 32);
+const cylGeo = new THREE.CylinderGeometry(0.8, 0.8, 3, 20);
 const cylMat = new THREE.MeshStandardMaterial({
     color: 0xff6b6b,
     roughness: 0.3,
@@ -173,31 +173,29 @@ export function addFigure(type: FigureType): THREE.Mesh {
  * Tries up to 30 random positions, picks the one with the best distance.
  */
 function findSpacedPosition(minDist: number): { x: number; z: number } {
-    const spread = 9; // placement radius
+    const spread = 9;
+    const minDistSq = minDist * minDist;
     let bestPos = { x: 0, z: 0 };
-    let bestMinDist = -1;
+    let bestMinDistSq = -1;
 
     for (let attempt = 0; attempt < 30; attempt++) {
         const x = (Math.random() - 0.5) * spread * 2;
         const z = (Math.random() - 0.5) * spread * 2;
 
-        // Find the minimum distance to any existing shape
-        let closestDist = Infinity;
+        let closestDistSq = Infinity;
         for (const obj of sceneObjects) {
             const dx = obj.position.x - x;
             const dz = obj.position.z - z;
-            const d = Math.sqrt(dx * dx + dz * dz);
-            if (d < closestDist) closestDist = d;
+            const dSq = dx * dx + dz * dz;
+            if (dSq < closestDistSq) closestDistSq = dSq;
         }
 
-        // If this position is far enough, use it immediately
-        if (closestDist >= minDist) {
+        if (closestDistSq >= minDistSq) {
             return { x, z };
         }
 
-        // Otherwise track the best we've found
-        if (closestDist > bestMinDist) {
-            bestMinDist = closestDist;
+        if (closestDistSq > bestMinDistSq) {
+            bestMinDistSq = closestDistSq;
             bestPos = { x, z };
         }
     }

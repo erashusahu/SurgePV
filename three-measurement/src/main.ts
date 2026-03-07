@@ -7,31 +7,86 @@ import './style.css';
 
 import type { FigureType } from './scene';
 
-let isRemovingShape = false;
-let isMovingShape = false;
+// ─── App Mode State Machine ─────────────────────────────────────────────────
+const AppMode = {
+    Idle: 0,
+    Measuring: 1,
+    Removing: 2,
+    Moving: 3,
+} as const;
+
+type AppMode = (typeof AppMode)[keyof typeof AppMode];
+
+let currentMode: AppMode = AppMode.Idle;
+
+const CURSOR_BY_MODE: Record<AppMode, string> = {
+    [AppMode.Idle]: 'default',
+    [AppMode.Measuring]: 'crosshair',
+    [AppMode.Removing]: 'not-allowed',
+    [AppMode.Moving]: 'grab',
+};
 
 // ─── Mount Renderer ──────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.appendChild(renderer.domElement);
 
 // ─── Measurement System ──────────────────────────────────────────────────────
-const measurementSystem = new MeasurementSystem(scene);
+const measurementSystem = new MeasurementSystem(scene, sceneObjects);
 measurementSystem.onStatusChange = () => updateStatus();
 
 // ─── Drag Controls ─────────────────────────────────────────────────────────────
 const dragControls = new DragControls(sceneObjects, camera, renderer.domElement);
 dragControls.enabled = false;
 
-dragControls.addEventListener('dragstart', function () {
-  controls.enabled = false; // Disable orbit controls while dragging
+dragControls.addEventListener('dragstart', () => {
+  controls.enabled = false;
+  renderer.domElement.style.cursor = 'grabbing';
 });
 
-dragControls.addEventListener('dragend', function (event: any) {
+dragControls.addEventListener('dragend', (event: any) => {
   controls.enabled = true;
+  renderer.domElement.style.cursor = CURSOR_BY_MODE[currentMode];
   if (event.object) {
     invalidateVertexCache(event.object as THREE.Mesh);
   }
 });
+
+// ─── Mode Transitions ───────────────────────────────────────────────────────
+function setMode(mode: AppMode): void {
+  // Exit current mode
+  if (currentMode === AppMode.Measuring) {
+    measurementSystem.deactivate();
+    measureBtn.classList.remove('active');
+    measureBtn.textContent = '\u{1F4CF} Measure';
+  } else if (currentMode === AppMode.Removing) {
+    removeShapeBtn.classList.remove('active');
+  } else if (currentMode === AppMode.Moving) {
+    dragControls.enabled = false;
+    moveShapeBtn.classList.remove('active');
+  }
+
+  // Toggle off if clicking the same mode button
+  if (currentMode === mode) {
+    currentMode = AppMode.Idle;
+  } else {
+    currentMode = mode;
+  }
+
+  // Enter new mode
+  if (currentMode === AppMode.Measuring) {
+    measurementSystem.activate();
+    measureBtn.classList.add('active');
+    measureBtn.textContent = '\u2716 Stop Measuring';
+  } else if (currentMode === AppMode.Removing) {
+    removeShapeBtn.classList.add('active');
+  } else if (currentMode === AppMode.Moving) {
+    dragControls.enabled = true;
+    moveShapeBtn.classList.add('active');
+  }
+
+  renderer.domElement.style.cursor = CURSOR_BY_MODE[currentMode];
+  updateStatus();
+}
 
 // ─── Raycaster ───────────────────────────────────────────────────────────────
 const raycaster = new THREE.Raycaster();
@@ -75,47 +130,47 @@ renderer.domElement.addEventListener('contextmenu', (e: Event) => e.preventDefau
 
 // Left-click = place measurement points OR select existing measurement OR remove shape
 renderer.domElement.addEventListener('click', (event: MouseEvent) => {
-  if (event.button !== 0) return; // Only left-click
-  
-  // If we are in "move shape" mode, DragControls handles interactions internally.
-  if (isMovingShape) return; 
+  if (event.button !== 0) return;
 
-  if (isRemovingShape) {
-    setRaycasterFromEvent(event);
-    const intersects = raycaster.intersectObjects(scene.children, true);
+  switch (currentMode) {
+    case AppMode.Moving:
+      return; // DragControls handles it
 
-    for (const hit of intersects) {
-      if (isMeasurementObject(hit.object)) continue;
-
-      // Skip ground
-      if (hit.object === groundPlane) continue;
-
-      // Hit a valid shape! Remove it.
-      const target = hit.object as THREE.Mesh;
-      invalidateVertexCache(target);
-      removeFigure(target);
-      updateStatus();
-      break;
+    case AppMode.Removing: {
+      setRaycasterFromEvent(event);
+      const intersects = raycaster.intersectObjects(scene.children, true);
+      for (const hit of intersects) {
+        if (isMeasurementObject(hit.object)) continue;
+        if (hit.object === groundPlane) continue;
+        const target = hit.object as THREE.Mesh;
+        invalidateVertexCache(target);
+        removeFigure(target);
+        updateStatus();
+        break;
+      }
+      return;
     }
-    return;
-  }
 
-  if (measurementSystem.active) {
-    const point = getWorldPosition(event);
-    if (point) {
-      measurementSystem.handleClick(point);
+    case AppMode.Measuring: {
+      const point = getWorldPosition(event);
+      if (point) {
+        measurementSystem.handleClick(point);
+        updateStatus();
+      }
+      return;
+    }
+
+    default: {
+      // Idle → try to select a measurement line
+      setRaycasterFromEvent(event);
+      measurementSystem.selectMeasurementAt(raycaster);
       updateStatus();
     }
-  } else {
-    // Not in measure mode → try to select a measurement line
-    setRaycasterFromEvent(event);
-    measurementSystem.selectMeasurementAt(raycaster);
-    updateStatus();
   }
 });
 
 renderer.domElement.addEventListener('mousemove', throttle((event: MouseEvent) => {
-  if (!measurementSystem.active) return;
+  if (currentMode !== AppMode.Measuring) return;
 
   const point = getWorldPosition(event);
   if (point) {
@@ -168,67 +223,9 @@ const instructionEl = document.getElementById('instruction')!;
 const unitEl = document.getElementById('unit-display')!;
 const selectionInfoEl = document.getElementById('selection-info')!;
 
-measureBtn.addEventListener('click', () => {
-  if (isRemovingShape) {
-    isRemovingShape = false;
-    removeShapeBtn.classList.remove('active');
-  }
-  if (isMovingShape) {
-    isMovingShape = false;
-    dragControls.enabled = false;
-    moveShapeBtn.classList.remove('active');
-  }
-
-  if (measurementSystem.active) {
-    measurementSystem.deactivate();
-    measureBtn.classList.remove('active');
-    measureBtn.textContent = '📏 Measure';
-  } else {
-    measurementSystem.activate();
-    measureBtn.classList.add('active');
-    measureBtn.textContent = '✖ Stop Measuring';
-  }
-  updateStatus();
-});
-
-removeShapeBtn.addEventListener('click', () => {
-  isRemovingShape = !isRemovingShape;
-  if (isRemovingShape) {
-    isMovingShape = false;
-    dragControls.enabled = false;
-    moveShapeBtn.classList.remove('active');
-    // Disable measure mode if active
-    if (measurementSystem.active) {
-      measurementSystem.deactivate();
-      measureBtn.classList.remove('active');
-      measureBtn.textContent = '📏 Measure';
-    }
-    removeShapeBtn.classList.add('active');
-  } else {
-    removeShapeBtn.classList.remove('active');
-  }
-  updateStatus();
-});
-
-moveShapeBtn.addEventListener('click', () => {
-  isMovingShape = !isMovingShape;
-  if (isMovingShape) {
-    isRemovingShape = false;
-    removeShapeBtn.classList.remove('active');
-    if (measurementSystem.active) {
-      measurementSystem.deactivate();
-      measureBtn.classList.remove('active');
-      measureBtn.textContent = '📏 Measure';
-    }
-    moveShapeBtn.classList.add('active');
-    dragControls.enabled = true;
-  } else {
-    moveShapeBtn.classList.remove('active');
-    dragControls.enabled = false;
-  }
-  updateStatus();
-});
-
+measureBtn.addEventListener('click', () => setMode(AppMode.Measuring));
+removeShapeBtn.addEventListener('click', () => setMode(AppMode.Removing));
+moveShapeBtn.addEventListener('click', () => setMode(AppMode.Moving));
 clearBtn.addEventListener('click', () => {
   measurementSystem.clearAll();
   updateStatus();
@@ -248,42 +245,47 @@ figureTypes.forEach((type) => {
 
 // ─── Status Update ───────────────────────────────────────────────────────────
 function updateStatus(): void {
-  const count = measurementSystem.measurementCount;
-  countEl.textContent = `${count}`;
+  countEl.textContent = `${measurementSystem.measurementCount}`;
   unitEl.textContent = measurementSystem.unit.toUpperCase();
 
-  if (measurementSystem.hasSelection && !isRemovingShape) {
-    selectionInfoEl.style.display = 'flex';
-  } else {
-    selectionInfoEl.style.display = 'none';
-  }
+  const showSelection = currentMode === AppMode.Idle && measurementSystem.hasSelection;
+  selectionInfoEl.style.display = showSelection ? 'flex' : 'none';
 
-  if (isRemovingShape) {
-    statusEl.textContent = 'Removing Shapes';
-    statusEl.className = 'status-badge measuring'; // re-using measuring style for yellow alert
-    instructionEl.textContent = 'Click on any shape to delete it from the scene';
-  } else if (isMovingShape) {
-    statusEl.textContent = 'Moving Shapes';
-    statusEl.className = 'status-badge moving';
-    instructionEl.textContent = 'Click and drag any shape to move it';
-  } else if (!measurementSystem.active) {
-    if (measurementSystem.hasSelection) {
-      statusEl.textContent = 'Selected';
-      statusEl.className = 'status-badge selected';
-      instructionEl.textContent = 'E = erase • M = change unit • ESC = deselect';
-    } else {
-      statusEl.textContent = 'Inactive';
-      statusEl.className = 'status-badge inactive';
-      instructionEl.textContent = 'Click "Measure" to start • Click a line to select';
-    }
-  } else if (measurementSystem.measuring) {
-    statusEl.textContent = 'Click second point';
-    statusEl.className = 'status-badge measuring';
-    instructionEl.textContent = 'Click to set endpoint • ESC to cancel • 🧲 Snapping active';
-  } else {
-    statusEl.textContent = 'Ready';
-    statusEl.className = 'status-badge active';
-    instructionEl.textContent = 'Click on shapes or grid • 🧲 Vertex snap auto-detects';
+  switch (currentMode) {
+    case AppMode.Removing:
+      statusEl.textContent = 'Removing Shapes';
+      statusEl.className = 'status-badge measuring';
+      instructionEl.textContent = 'Click on any shape to delete it from the scene';
+      break;
+
+    case AppMode.Moving:
+      statusEl.textContent = 'Moving Shapes';
+      statusEl.className = 'status-badge moving';
+      instructionEl.textContent = 'Click and drag any shape to move it';
+      break;
+
+    case AppMode.Measuring:
+      if (measurementSystem.measuring) {
+        statusEl.textContent = 'Click second point';
+        statusEl.className = 'status-badge measuring';
+        instructionEl.textContent = 'Click to set endpoint • ESC to cancel';
+      } else {
+        statusEl.textContent = 'Ready';
+        statusEl.className = 'status-badge active';
+        instructionEl.textContent = 'Click on shapes or grid to start measuring';
+      }
+      break;
+
+    default: // Idle
+      if (measurementSystem.hasSelection) {
+        statusEl.textContent = 'Selected';
+        statusEl.className = 'status-badge selected';
+        instructionEl.textContent = 'E = erase • M = change unit • ESC = deselect';
+      } else {
+        statusEl.textContent = 'Idle';
+        statusEl.className = 'status-badge inactive';
+        instructionEl.textContent = 'Click "Measure" to start • Click a line to select';
+      }
   }
 }
 

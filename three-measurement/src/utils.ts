@@ -131,16 +131,24 @@ export function extractVertices(mesh: THREE.Mesh): THREE.Vector3[] {
     }
 
     const vertices: THREE.Vector3[] = [];
-    const seen = new Set<string>();
+    const seen = new Set<number>();
     const tempV = new THREE.Vector3();
+
+    // Quantize to 3 decimal places and combine into a single integer hash
+    // This avoids expensive string creation + concatenation per vertex
+    const QUANT = 1000;
+    const PRIME1 = 73856093;
+    const PRIME2 = 19349663;
+    const PRIME3 = 83492791;
 
     for (let i = 0; i < posAttr.count; i++) {
         tempV.fromBufferAttribute(posAttr, i);
         mesh.localToWorld(tempV);
-        // Deduplicate (round to 3 decimals)
-        const key = `${tempV.x.toFixed(3)},${tempV.y.toFixed(3)},${tempV.z.toFixed(3)}`;
-        if (!seen.has(key)) {
-            seen.add(key);
+        const hash = ((tempV.x * QUANT) | 0) * PRIME1 ^
+                     ((tempV.y * QUANT) | 0) * PRIME2 ^
+                     ((tempV.z * QUANT) | 0) * PRIME3;
+        if (!seen.has(hash)) {
+            seen.add(hash);
             vertices.push(tempV.clone());
         }
     }
@@ -154,31 +162,31 @@ const _snapResult = new THREE.Vector3();
 
 /**
  * Find the nearest vertex to a given world point within a snap radius.
+ * Accepts a pre-filtered array of snap-target meshes (avoids full scene traversal).
  * Uses cached vertex data and avoids per-call allocations.
  */
 export function findNearestVertex(
     point: THREE.Vector3,
-    scene: THREE.Scene,
+    targets: THREE.Mesh[],
     snapRadius: number = 0.5
 ): THREE.Vector3 | null {
     let found = false;
     let minDistSq = snapRadius * snapRadius;
 
-    scene.traverse((obj: THREE.Object3D) => {
-        if (!(obj instanceof THREE.Mesh) || !obj.geometry || obj.name === 'ground') return;
-        if (isMeasurementObject(obj)) return;
+    for (let t = 0, tLen = targets.length; t < tLen; t++) {
+        const mesh = targets[t];
+        if (!mesh.geometry) continue;
 
-        const verts = extractVertices(obj);
+        const verts = extractVertices(mesh);
         for (let i = 0, len = verts.length; i < len; i++) {
-            const v = verts[i];
-            const dSq = point.distanceToSquared(v);
+            const dSq = point.distanceToSquared(verts[i]);
             if (dSq < minDistSq) {
                 minDistSq = dSq;
-                _snapResult.copy(v);
+                _snapResult.copy(verts[i]);
                 found = true;
             }
         }
-    });
+    }
 
     return found ? _snapResult.clone() : null;
 }
