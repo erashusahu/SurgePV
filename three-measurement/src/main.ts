@@ -1,12 +1,14 @@
-import { scene, camera, renderer, groundPlane, animate, addFigure, removeFigure } from './scene';
+import { scene, camera, renderer, groundPlane, animate, addFigure, removeFigure, sceneObjects, controls } from './scene';
 import { MeasurementSystem } from './MeasurementSystem';
 import { isMeasurementObject, invalidateVertexCache, throttle } from './utils';
 import * as THREE from 'three';
+import { DragControls } from 'three/examples/jsm/controls/DragControls.js';
 import './style.css';
 
 import type { FigureType } from './scene';
 
 let isRemovingShape = false;
+let isMovingShape = false;
 
 // ─── Mount Renderer ──────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -15,6 +17,21 @@ app.appendChild(renderer.domElement);
 // ─── Measurement System ──────────────────────────────────────────────────────
 const measurementSystem = new MeasurementSystem(scene);
 measurementSystem.onStatusChange = () => updateStatus();
+
+// ─── Drag Controls ─────────────────────────────────────────────────────────────
+const dragControls = new DragControls(sceneObjects, camera, renderer.domElement);
+dragControls.enabled = false;
+
+dragControls.addEventListener('dragstart', function () {
+  controls.enabled = false; // Disable orbit controls while dragging
+});
+
+dragControls.addEventListener('dragend', function (event: any) {
+  controls.enabled = true;
+  if (event.object) {
+    invalidateVertexCache(event.object as THREE.Mesh);
+  }
+});
 
 // ─── Raycaster ───────────────────────────────────────────────────────────────
 const raycaster = new THREE.Raycaster();
@@ -59,6 +76,9 @@ renderer.domElement.addEventListener('contextmenu', (e: Event) => e.preventDefau
 // Left-click = place measurement points OR select existing measurement OR remove shape
 renderer.domElement.addEventListener('click', (event: MouseEvent) => {
   if (event.button !== 0) return; // Only left-click
+  
+  // If we are in "move shape" mode, DragControls handles interactions internally.
+  if (isMovingShape) return; 
 
   if (isRemovingShape) {
     setRaycasterFromEvent(event);
@@ -141,6 +161,7 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
 const measureBtn = document.getElementById('measure-btn')!;
 const clearBtn = document.getElementById('clear-btn')!;
 const removeShapeBtn = document.getElementById('remove-shape-btn')!;
+const moveShapeBtn = document.getElementById('move-shape-btn')!;
 const statusEl = document.getElementById('status')!;
 const countEl = document.getElementById('count')!;
 const instructionEl = document.getElementById('instruction')!;
@@ -151,6 +172,11 @@ measureBtn.addEventListener('click', () => {
   if (isRemovingShape) {
     isRemovingShape = false;
     removeShapeBtn.classList.remove('active');
+  }
+  if (isMovingShape) {
+    isMovingShape = false;
+    dragControls.enabled = false;
+    moveShapeBtn.classList.remove('active');
   }
 
   if (measurementSystem.active) {
@@ -168,6 +194,9 @@ measureBtn.addEventListener('click', () => {
 removeShapeBtn.addEventListener('click', () => {
   isRemovingShape = !isRemovingShape;
   if (isRemovingShape) {
+    isMovingShape = false;
+    dragControls.enabled = false;
+    moveShapeBtn.classList.remove('active');
     // Disable measure mode if active
     if (measurementSystem.active) {
       measurementSystem.deactivate();
@@ -177,6 +206,25 @@ removeShapeBtn.addEventListener('click', () => {
     removeShapeBtn.classList.add('active');
   } else {
     removeShapeBtn.classList.remove('active');
+  }
+  updateStatus();
+});
+
+moveShapeBtn.addEventListener('click', () => {
+  isMovingShape = !isMovingShape;
+  if (isMovingShape) {
+    isRemovingShape = false;
+    removeShapeBtn.classList.remove('active');
+    if (measurementSystem.active) {
+      measurementSystem.deactivate();
+      measureBtn.classList.remove('active');
+      measureBtn.textContent = '📏 Measure';
+    }
+    moveShapeBtn.classList.add('active');
+    dragControls.enabled = true;
+  } else {
+    moveShapeBtn.classList.remove('active');
+    dragControls.enabled = false;
   }
   updateStatus();
 });
@@ -214,6 +262,10 @@ function updateStatus(): void {
     statusEl.textContent = 'Removing Shapes';
     statusEl.className = 'status-badge measuring'; // re-using measuring style for yellow alert
     instructionEl.textContent = 'Click on any shape to delete it from the scene';
+  } else if (isMovingShape) {
+    statusEl.textContent = 'Moving Shapes';
+    statusEl.className = 'status-badge moving';
+    instructionEl.textContent = 'Click and drag any shape to move it';
   } else if (!measurementSystem.active) {
     if (measurementSystem.hasSelection) {
       statusEl.textContent = 'Selected';

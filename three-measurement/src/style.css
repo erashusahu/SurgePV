@@ -201,6 +201,12 @@ canvas {
   animation: pulse 1s ease-in-out infinite;
 }
 
+.status-badge.moving {
+  background: rgba(156, 39, 176, 0.15);
+  color: #e040fb;
+  animation: pulse 1s ease-in-out infinite;
+}
+
 .status-badge.selected {
   background: rgba(255, 214, 0, 0.15);
   color: #ffd600;
