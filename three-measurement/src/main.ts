@@ -1,4 +1,4 @@
-import { scene, camera, renderer, groundPlane, animate, addFigure, removeFigure, sceneObjects, controls } from './scene';
+import { scene, camera, renderer, groundPlane, animate, addFigure, removeFigure, undoRemoveFigure, canUndo, sceneObjects, controls } from './scene';
 import { MeasurementSystem } from './MeasurementSystem';
 import { isMeasurementObject, invalidateVertexCache, throttle } from './utils';
 import * as THREE from 'three';
@@ -182,6 +182,17 @@ renderer.domElement.addEventListener('mousemove', throttle((event: MouseEvent) =
 window.addEventListener('keydown', (event: KeyboardEvent) => {
   const key = event.key.toLowerCase();
 
+  // Undo Shape Deletion
+  if (key === 'z' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    if (canUndo()) {
+      const restoredMesh = undoRemoveFigure();
+      if (restoredMesh) invalidateVertexCache(restoredMesh);
+      updateStatus();
+    }
+    return;
+  }
+
   if (key === 'escape') {
     if (measurementSystem.measuring) {
       measurementSystem.cancelMeasurement();
@@ -222,6 +233,7 @@ const countEl = document.getElementById('count')!;
 const instructionEl = document.getElementById('instruction')!;
 const unitEl = document.getElementById('unit-display')!;
 const selectionInfoEl = document.getElementById('selection-info')!;
+const undoShapeBtn = document.getElementById('undo-shape-btn') as HTMLButtonElement;
 const recordsBody = document.getElementById('records-body')!;
 const recordsCountEl = document.getElementById('records-count')!;
 const recordsEmptyEl = document.getElementById('records-empty')!;
@@ -229,6 +241,15 @@ const recordsEmptyEl = document.getElementById('records-empty')!;
 measureBtn.addEventListener('click', () => setMode(AppMode.Measuring));
 removeShapeBtn.addEventListener('click', () => setMode(AppMode.Removing));
 moveShapeBtn.addEventListener('click', () => setMode(AppMode.Moving));
+
+undoShapeBtn.addEventListener('click', () => {
+  if (canUndo()) {
+    const restoredMesh = undoRemoveFigure();
+    if (restoredMesh) invalidateVertexCache(restoredMesh);
+    updateStatus();
+  }
+});
+
 clearBtn.addEventListener('click', () => {
   measurementSystem.clearAll();
   updateStatus();
@@ -295,6 +316,8 @@ function updateStatus(): void {
   countEl.textContent = `${measurementSystem.measurementCount}`;
   unitEl.textContent = measurementSystem.unit.toUpperCase();
   updateRecordsTable();
+  
+  undoShapeBtn.disabled = !canUndo();
 
   const showSelection = currentMode === AppMode.Idle && measurementSystem.hasSelection;
   selectionInfoEl.style.display = showSelection ? 'flex' : 'none';

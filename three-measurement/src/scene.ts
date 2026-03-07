@@ -203,17 +203,43 @@ function findSpacedPosition(minDist: number): { x: number; z: number } {
     return bestPos;
 }
 
+// ─── Undo Stack ──────────────────────────────────────────────────────────────
+export const undoStack: THREE.Mesh[] = [];
+const MAX_UNDO_STEPS = 20;
+
+export function canUndo(): boolean {
+    return undoStack.length > 0;
+}
+
+export function undoRemoveFigure(): THREE.Mesh | null {
+    if (undoStack.length === 0) return null;
+
+    const mesh = undoStack.pop()!;
+    scene.add(mesh);
+    sceneObjects.push(mesh);
+    return mesh;
+}
+
 // ─── Remove Figure ───────────────────────────────────────────────────────────
 export function removeFigure(mesh: THREE.Mesh): void {
     scene.remove(mesh);
-    if (mesh.geometry) mesh.geometry.dispose();
-    if (mesh.material) {
-        if (Array.isArray(mesh.material)) {
-            mesh.material.forEach((m: THREE.Material) => m.dispose());
-        } else {
-            (mesh.material as THREE.Material).dispose();
+    
+    // Cache the mesh in the undo stack instead of immediately disposing it
+    undoStack.push(mesh);
+
+    // If we exceed max history, permanently dispose the oldest mesh
+    if (undoStack.length > MAX_UNDO_STEPS) {
+        const oldest = undoStack.shift()!;
+        if (oldest.geometry) oldest.geometry.dispose();
+        if (oldest.material) {
+            if (Array.isArray(oldest.material)) {
+                oldest.material.forEach((m: THREE.Material) => m.dispose());
+            } else {
+                (oldest.material as THREE.Material).dispose();
+            }
         }
     }
+
     const idx = sceneObjects.indexOf(mesh);
     if (idx !== -1) sceneObjects.splice(idx, 1);
 }
