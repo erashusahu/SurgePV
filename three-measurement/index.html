@@ -45,9 +45,16 @@
       <span class="label">Measurements</span>
       <span class="value" id="count">0</span>
     </div>
-    <div class="info-badge">
+    <div class="info-badge unit-badge" id="unit-badge">
       <span class="label">Unit</span>
-      <span class="value" id="unit-display">M</span>
+      <button id="unit-dropdown-toggle" class="unit-toggle">
+        <div class="unit-toggle-text">
+          <span id="unit-display" class="unit-code">M</span>
+          <small id="unit-label">Meters</small>
+        </div>
+        <span class="caret">▾</span>
+      </button>
+      <div id="unit-dropdown-menu" class="unit-dropdown-menu"></div>
     </div>
   </div>
 

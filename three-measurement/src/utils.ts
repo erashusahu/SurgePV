@@ -17,7 +17,7 @@ const UNIT_FACTORS: Record<Unit, number> = {
     in: 39.3701,
 };
 
-const UNIT_ORDER: Unit[] = ['m', 'cm', 'ft', 'in'];
+export const UNIT_ORDER: Unit[] = ['m', 'cm', 'ft', 'in'];
 
 export function nextUnit(current: Unit): Unit {
     const idx = UNIT_ORDER.indexOf(current);

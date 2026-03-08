@@ -486,11 +486,16 @@ export class MeasurementSystem {
     }
 
     cycleGlobalUnit(): void {
-        this.currentUnit = nextUnit(this.currentUnit);
+        this.setGlobalUnit(nextUnit(this.currentUnit));
+    }
+
+    setGlobalUnit(unit: Unit): void {
+        if (this.currentUnit === unit) return;
+        this.currentUnit = unit;
 
         // Update all measurements
         for (const m of this.measurements.values()) {
-            m.unit = this.currentUnit;
+            m.unit = unit;
             this.rebuildMeasurementLabel(m);
         }
     }

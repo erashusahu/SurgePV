@@ -1,6 +1,6 @@
 import { scene, camera, renderer, groundPlane, animate, addFigure, removeFigure, undoRemoveFigure, canUndo, sceneObjects, controls } from './scene';
 import { MeasurementSystem } from './MeasurementSystem';
-import { isMeasurementObject, invalidateVertexCache, throttle } from './utils';
+import { isMeasurementObject, invalidateVertexCache, throttle, UNIT_ORDER } from './utils';
 import * as THREE from 'three';
 import { DragControls } from 'three/examples/jsm/controls/DragControls.js';
 import './style.css';
@@ -237,6 +237,10 @@ const undoShapeBtn = document.getElementById('undo-shape-btn') as HTMLButtonElem
 const recordsBody = document.getElementById('records-body')!;
 const recordsCountEl = document.getElementById('records-count')!;
 const recordsEmptyEl = document.getElementById('records-empty')!;
+const addFigureDropdown = document.querySelector<HTMLDivElement>('.dropdown');
+const unitBadge = document.getElementById('unit-badge') as HTMLDivElement | null;
+const unitToggle = document.getElementById('unit-dropdown-toggle') as HTMLButtonElement | null;
+const unitMenu = document.getElementById('unit-dropdown-menu') as HTMLDivElement | null;
 
 measureBtn.addEventListener('click', () => setMode(AppMode.Measuring));
 removeShapeBtn.addEventListener('click', () => setMode(AppMode.Removing));
@@ -255,14 +259,74 @@ clearBtn.addEventListener('click', () => {
   updateStatus();
 });
 
+if (addFigureDropdown) {
+  const addFigureToggle = addFigureDropdown.querySelector<HTMLButtonElement>('.btn-add');
+  if (addFigureToggle) {
+    addFigureToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      addFigureDropdown.classList.toggle('open');
+    });
+  }
+
+  document.addEventListener('click', (event) => {
+    if (!addFigureDropdown.contains(event.target as Node)) {
+      addFigureDropdown.classList.remove('open');
+    }
+  });
+}
+
+if (unitBadge && unitToggle && unitMenu) {
+  const UNIT_LABEL_MAP: Record<string, string> = {
+    m: 'meters',
+    cm: 'centimeters',
+    ft: 'feet',
+    in: 'inches',
+  };
+
+  const renderUnitMenu = (): void => {
+    unitMenu.innerHTML = '';
+    UNIT_ORDER.forEach((unit) => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'unit-option';
+      option.innerHTML = `<span>${unit.toUpperCase()}</span><small>${UNIT_LABEL_MAP[unit]}</small>`;
+      if (unit === measurementSystem.unit) {
+        option.classList.add('active');
+      }
+      option.addEventListener('click', () => {
+        measurementSystem.setGlobalUnit(unit);
+        unitBadge.classList.remove('open');
+        updateStatus();
+      });
+      unitMenu.appendChild(option);
+    });
+  };
+
+  unitToggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    unitBadge.classList.toggle('open');
+    if (unitBadge.classList.contains('open')) {
+      renderUnitMenu();
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!unitBadge.contains(event.target as Node)) {
+      unitBadge.classList.remove('open');
+    }
+  });
+}
+
 // ─── Add Figure Buttons ──────────────────────────────────────────────────────
 const figureTypes: FigureType[] = ['box', 'sphere', 'cylinder', 'cone', 'torus'];
+
 figureTypes.forEach((type) => {
   const btn = document.getElementById(`add-${type}`);
   if (btn) {
     btn.addEventListener('click', () => {
       const mesh = addFigure(type);
       invalidateVertexCache(mesh);
+      addFigureDropdown?.classList.remove('open');
     });
   }
 });
@@ -289,11 +353,11 @@ function updateRecordsTable(): void {
     });
 
     tr.innerHTML = `
-      <td>${rec.index}</td>
-      <td><span class="shape-tag">${rec.startShape}</span></td>
-      <td><span class="shape-tag">${rec.endShape}</span></td>
-      <td><span class="dist-value">${rec.formattedDistance}</span></td>
-      <td></td>
+      <td data-label="#">${rec.index}</td>
+      <td data-label="From"><span class="shape-tag">${rec.startShape}</span></td>
+      <td data-label="To"><span class="shape-tag">${rec.endShape}</span></td>
+      <td data-label="Distance"><span class="dist-value">${rec.formattedDistance}</span></td>
+      <td data-label="Actions"></td>
     `;
 
     // Delete button (last cell)
