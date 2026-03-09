@@ -18,13 +18,13 @@
   <div class="toolbar">
     <h1>📐 3D Measure</h1>
     <div class="divider"></div>
-    <button id="measure-btn" class="btn">📏 Measure</button>
-    <button id="clear-btn" class="btn btn-danger">🗑 Clear All</button>
+    <button id="measure-btn" class="btn" aria-label="Toggle measurement mode">📏 Measure</button>
+    <button id="clear-btn" class="btn btn-danger" aria-label="Clear all measurements">🗑 Clear All</button>
     <div class="divider"></div>
 
     <!-- Add Figure Dropdown -->
     <div class="dropdown">
-      <button class="btn btn-add">➕ Add Figure ▾</button>
+      <button class="btn btn-add" aria-haspopup="true" aria-expanded="false">➕ Add Figure ▾</button>
       <div class="dropdown-menu">
         <button id="add-box" class="dropdown-item">📦 Box</button>
         <button id="add-sphere" class="dropdown-item">⚽ Sphere</button>
@@ -34,9 +34,9 @@
       </div>
     </div>
 
-    <button id="remove-shape-btn" class="btn btn-danger" style="margin-left: 8px;">🗑 Remove Shape</button>
-    <button id="move-shape-btn" class="btn" style="margin-left: 8px;">🤚 Move Shape</button>
-    <button id="undo-shape-btn" class="btn" style="margin-left: 8px;" disabled>↩ Undo</button>
+    <button id="remove-shape-btn" class="btn btn-danger" aria-label="Toggle remove shape mode" style="margin-left: 8px;">🗑 Remove Shape</button>
+    <button id="move-shape-btn" class="btn" aria-label="Toggle move shape mode" style="margin-left: 8px;">🤚 Move Shape</button>
+    <button id="undo-shape-btn" class="btn" aria-label="Undo last shape removal" style="margin-left: 8px;" disabled>↩ Undo</button>
   </div>
 
   <!-- Info Badges (top-right) -->
@@ -47,7 +47,7 @@
     </div>
     <div class="info-badge unit-badge" id="unit-badge">
       <span class="label">Unit</span>
-      <button id="unit-dropdown-toggle" class="unit-toggle">
+      <button id="unit-dropdown-toggle" class="unit-toggle" aria-haspopup="true" aria-expanded="false" aria-label="Change measurement unit">
         <div class="unit-toggle-text">
           <span id="unit-display" class="unit-code">M</span>
           <small id="unit-label">Meters</small>
@@ -101,7 +101,7 @@
   </div>
 
   <!-- Status Bar -->
-  <div class="status-panel">
+  <div class="status-panel" aria-live="polite">
     <span id="status" class="status-badge inactive">Inactive</span>
     <span id="instruction" class="instruction-text">Click "Measure" to start</span>
   </div>

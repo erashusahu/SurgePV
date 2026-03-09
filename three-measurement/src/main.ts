@@ -38,9 +38,19 @@ measurementSystem.onStatusChange = () => updateStatus();
 const dragControls = new DragControls(sceneObjects, camera, renderer.domElement);
 dragControls.enabled = false;
 
-dragControls.addEventListener('dragstart', () => {
+let dragOriginalY = 0;
+
+dragControls.addEventListener('dragstart', (event: any) => {
   controls.enabled = false;
   renderer.domElement.style.cursor = 'grabbing';
+  // Remember the shape's Y so we can lock it during drag
+  dragOriginalY = (event.object as THREE.Mesh).position.y;
+});
+
+dragControls.addEventListener('drag', (event: any) => {
+  const obj = event.object as THREE.Mesh;
+  // Lock Y axis — shapes move only on the XZ (ground) plane
+  obj.position.y = dragOriginalY;
 });
 
 dragControls.addEventListener('dragend', (event: any) => {
@@ -232,6 +242,7 @@ const statusEl = document.getElementById('status')!;
 const countEl = document.getElementById('count')!;
 const instructionEl = document.getElementById('instruction')!;
 const unitEl = document.getElementById('unit-display')!;
+const unitLabelEl = document.getElementById('unit-label') as HTMLElement | null;
 const selectionInfoEl = document.getElementById('selection-info')!;
 const undoShapeBtn = document.getElementById('undo-shape-btn') as HTMLButtonElement;
 const recordsBody = document.getElementById('records-body')!;
@@ -265,12 +276,14 @@ if (addFigureDropdown) {
     addFigureToggle.addEventListener('click', (event) => {
       event.stopPropagation();
       addFigureDropdown.classList.toggle('open');
+      addFigureToggle.setAttribute('aria-expanded', addFigureDropdown.classList.contains('open').toString());
     });
   }
 
   document.addEventListener('click', (event) => {
     if (!addFigureDropdown.contains(event.target as Node)) {
       addFigureDropdown.classList.remove('open');
+      addFigureToggle?.setAttribute('aria-expanded', 'false');
     }
   });
 }
@@ -305,7 +318,9 @@ if (unitBadge && unitToggle && unitMenu) {
   unitToggle.addEventListener('click', (event) => {
     event.stopPropagation();
     unitBadge.classList.toggle('open');
-    if (unitBadge.classList.contains('open')) {
+    const isOpen = unitBadge.classList.contains('open');
+    unitToggle.setAttribute('aria-expanded', isOpen.toString());
+    if (isOpen) {
       renderUnitMenu();
     }
   });
@@ -313,6 +328,7 @@ if (unitBadge && unitToggle && unitMenu) {
   document.addEventListener('click', (event) => {
     if (!unitBadge.contains(event.target as Node)) {
       unitBadge.classList.remove('open');
+      unitToggle.setAttribute('aria-expanded', 'false');
     }
   });
 }
@@ -379,6 +395,12 @@ function updateRecordsTable(): void {
 function updateStatus(): void {
   countEl.textContent = `${measurementSystem.measurementCount}`;
   unitEl.textContent = measurementSystem.unit.toUpperCase();
+
+  // Keep the full unit label in sync
+  const UNIT_FULL_LABELS: Record<string, string> = { m: 'Meters', cm: 'Centimeters', ft: 'Feet', in: 'Inches' };
+  if (unitLabelEl) {
+    unitLabelEl.textContent = UNIT_FULL_LABELS[measurementSystem.unit] ?? measurementSystem.unit;
+  }
   updateRecordsTable();
   
   undoShapeBtn.disabled = !canUndo();

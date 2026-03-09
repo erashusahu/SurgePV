@@ -366,6 +366,13 @@ export class MeasurementSystem {
         }
         this.startPoint = null;
         this.isMeasuring = false;
+
+        // Clean up preview label resources
+        if (this.previewLabelTexture) {
+            this.previewLabelTexture.dispose();
+            this.previewLabelTexture = null;
+        }
+        this.previewLabelCanvas = null;
     }
 
     // ─── Live Preview Label ──────────────────────────────────────────────────
@@ -385,10 +392,11 @@ export class MeasurementSystem {
             const mat = new THREE.SpriteMaterial({
                 map: this.previewLabelTexture,
                 transparent: true,
-                depthTest: false,
+                depthTest: true,
+                depthWrite: false,
             });
             this.previewLabel = new THREE.Sprite(mat);
-            this.previewLabel.scale.set(2.5, 0.625, 1);
+            this.previewLabel.scale.set(1.8, 0.45, 1);
             this.scene.add(this.previewLabel);
         }
 
@@ -532,6 +540,12 @@ export class MeasurementSystem {
         const end = endPoint.clone();
 
         const distance = calculateDistance(start, end);
+
+        // Prevent zero / near-zero distance measurements
+        if (distance < 0.01) {
+            this.cancelMeasurement();
+            return;
+        }
         const id = generateId();
         const group = this.createDimensionGroup(start, end, distance, this.currentUnit);
         this.scene.add(group);
@@ -602,8 +616,14 @@ export class MeasurementSystem {
         cone.position.copy(position);
 
         // Orient cone — reuse static temp objects
-        MeasurementSystem._tempQuat.setFromUnitVectors(MeasurementSystem._upVec, direction);
-        cone.quaternion.copy(MeasurementSystem._tempQuat);
+        // Guard against degenerate case when direction is opposite to up (produces NaN quaternion)
+        const dot = MeasurementSystem._upVec.dot(direction);
+        if (dot < -0.9999) {
+            cone.quaternion.set(1, 0, 0, 0); // 180° rotation around X
+        } else {
+            MeasurementSystem._tempQuat.setFromUnitVectors(MeasurementSystem._upVec, direction);
+            cone.quaternion.copy(MeasurementSystem._tempQuat);
+        }
 
         return cone;
     }
@@ -677,12 +697,13 @@ export class MeasurementSystem {
         const material = new THREE.SpriteMaterial({
             map: texture,
             transparent: true,
-            depthTest: false,
+            depthTest: true,
+            depthWrite: false,
         });
 
         const sprite = new THREE.Sprite(material);
         sprite.position.copy(position);
-        sprite.scale.set(4.0, 1.0, 1);
+        sprite.scale.set(2.0, 0.5, 1);
 
         return sprite;
     }
@@ -713,6 +734,13 @@ export class MeasurementSystem {
         this.clearAll();
         this.hideCursorMarker();
         this.hideSnapIndicator();
+
+        // Dispose preview label resources
+        if (this.previewLabelTexture) {
+            this.previewLabelTexture.dispose();
+            this.previewLabelTexture = null;
+        }
+        this.previewLabelCanvas = null;
 
         // Dispose reusable materials
         this.dimensionLineMaterial.dispose();

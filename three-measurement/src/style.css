@@ -667,6 +667,7 @@ kbd {
   .info-badges-container {
     top: auto;
     bottom: 20px;
+    left: auto;
     right: 20px;
     flex-direction: column;
     align-items: flex-end;
