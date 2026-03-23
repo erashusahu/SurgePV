@@ -1,275 +1,82 @@
-import { scene, camera, renderer, groundPlane, animate, addFigure, removeFigure, undoRemoveFigure, canUndo, sceneObjects, controls } from './scene';
-import { MeasurementSystem } from './MeasurementSystem';
-import { isMeasurementObject, invalidateVertexCache, throttle, UNIT_ORDER } from './utils';
-import * as THREE from 'three';
-import { DragControls } from 'three/examples/jsm/controls/DragControls.js';
+/**
+ * Three.js Measurement Tool - ECS Architecture
+ * Main application entry point
+ */
+
+import { scene, camera, renderer, groundPlane, controls, initializeDefaultShapes } from './scene';
+import { World } from './ecs/World';
+import { TransformSystem } from './systems/TransformSystem';
+import { SelectionSystem } from './systems/SelectionSystem';
+import { SnappingSystem } from './systems/SnappingSystem';
+import { MeasuringSystem } from './systems/MeasuringSystem';
+import { InputSystem } from './systems/InputSystem';
+import { DragSystem } from './systems/DragSystem';
+import { ShapeSystem } from './systems/ShapeSystem';
+import { UISystem } from './systems/UISystem';
+import { UNIT_ORDER } from './utils';
+import type { ShapeType } from './components/Shape';
 import './style.css';
-
-import type { FigureType } from './scene';
-
-// ─── App Mode State Machine ─────────────────────────────────────────────────
-const AppMode = {
-    Idle: 0,
-    Measuring: 1,
-    Removing: 2,
-    Moving: 3,
-} as const;
-
-type AppMode = (typeof AppMode)[keyof typeof AppMode];
-
-let currentMode: AppMode = AppMode.Idle;
-
-const CURSOR_BY_MODE: Record<AppMode, string> = {
-    [AppMode.Idle]: 'default',
-    [AppMode.Measuring]: 'crosshair',
-    [AppMode.Removing]: 'not-allowed',
-    [AppMode.Moving]: 'grab',
-};
 
 // ─── Mount Renderer ──────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.appendChild(renderer.domElement);
 
-// ─── Measurement System ──────────────────────────────────────────────────────
-const measurementSystem = new MeasurementSystem(scene, sceneObjects);
-measurementSystem.onStatusChange = () => updateStatus();
+// ─── Initialize ECS World ────────────────────────────────────────────────────
+const world = new World();
+const eventBus = world.getEventBus();
 
-// ─── Drag Controls ─────────────────────────────────────────────────────────────
-const dragControls = new DragControls(sceneObjects, camera, renderer.domElement);
-dragControls.enabled = false;
+// Enable debug mode for development (optional)
+// eventBus.setDebugMode(true);
 
-let dragOriginalY = 0;
+// ─── Add Systems (in priority order) ─────────────────────────────────────────
+// Lower priority = runs first
+world.addSystem(new TransformSystem(eventBus));                                    // Priority 0
+world.addSystem(new InputSystem(world, scene, camera, renderer, groundPlane, eventBus)); // Priority 5
+world.addSystem(new SnappingSystem(scene, eventBus));                              // Priority 10
+world.addSystem(new ShapeSystem(world, scene, eventBus));                          // Priority 20
+world.addSystem(new MeasuringSystem(world, scene, eventBus));                      // Priority 30
+world.addSystem(new DragSystem(world, camera, renderer, controls, eventBus));      // Priority 40
+world.addSystem(new SelectionSystem(world, eventBus));                             // Priority 50
+world.addSystem(new UISystem(world, eventBus));                                    // Priority 100
 
-dragControls.addEventListener('dragstart', (event: any) => {
-  controls.enabled = false;
-  renderer.domElement.style.cursor = 'grabbing';
-  // Remember the shape's Y so we can lock it during drag
-  dragOriginalY = (event.object as THREE.Mesh).position.y;
-});
+// ─── Initialize Default Scene Objects ────────────────────────────────────────
+initializeDefaultShapes(world);
 
-dragControls.addEventListener('drag', (event: any) => {
-  const obj = event.object as THREE.Mesh;
-  // Lock Y axis — shapes move only on the XZ (ground) plane
-  obj.position.y = dragOriginalY;
-});
-
-dragControls.addEventListener('dragend', (event: any) => {
-  controls.enabled = true;
-  renderer.domElement.style.cursor = CURSOR_BY_MODE[currentMode];
-  if (event.object) {
-    invalidateVertexCache(event.object as THREE.Mesh);
-  }
-});
-
-// ─── Mode Transitions ───────────────────────────────────────────────────────
-function setMode(mode: AppMode): void {
-  // Exit current mode
-  if (currentMode === AppMode.Measuring) {
-    measurementSystem.deactivate();
-    measureBtn.classList.remove('active');
-    measureBtn.textContent = '\u{1F4CF} Measure';
-  } else if (currentMode === AppMode.Removing) {
-    removeShapeBtn.classList.remove('active');
-  } else if (currentMode === AppMode.Moving) {
-    dragControls.enabled = false;
-    moveShapeBtn.classList.remove('active');
-  }
-
-  // Toggle off if clicking the same mode button
-  if (currentMode === mode) {
-    currentMode = AppMode.Idle;
-  } else {
-    currentMode = mode;
-  }
-
-  // Enter new mode
-  if (currentMode === AppMode.Measuring) {
-    measurementSystem.activate();
-    measureBtn.classList.add('active');
-    measureBtn.textContent = '\u2716 Stop Measuring';
-  } else if (currentMode === AppMode.Removing) {
-    removeShapeBtn.classList.add('active');
-  } else if (currentMode === AppMode.Moving) {
-    dragControls.enabled = true;
-    moveShapeBtn.classList.add('active');
-  }
-
-  renderer.domElement.style.cursor = CURSOR_BY_MODE[currentMode];
-  updateStatus();
-}
-
-// ─── Raycaster ───────────────────────────────────────────────────────────────
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-
-function setRaycasterFromEvent(event: MouseEvent): void {
-  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
-}
-
-function getWorldPosition(event: MouseEvent): THREE.Vector3 | null {
-  setRaycasterFromEvent(event);
-
-  // Raycast ALL scene objects — sorted by distance (closest first)
-  const intersects = raycaster.intersectObjects(scene.children, true);
-
-  if (intersects.length === 0) return null;
-
-  // Find the closest solid object (shape) that isn't a measurement or ground
-  for (const hit of intersects) {
-    if (isMeasurementObject(hit.object)) continue;
-
-    // Skip the ground plane — we'll use it as fallback
-    if (hit.object === groundPlane) continue;
-
-    // This is a solid 3D shape! Return the surface hit point
-    return hit.point;
-  }
-
-  // Fallback: use ground plane intersection
-  const groundHit = intersects.find((h: THREE.Intersection) => h.object === groundPlane);
-  if (groundHit) return groundHit.point;
-
-  return intersects[0].point;
-}
-
-// ─── Mouse Events ────────────────────────────────────────────────────────────
-// Prevent right-click context menu (right-click is for camera orbit)
-renderer.domElement.addEventListener('contextmenu', (e: Event) => e.preventDefault());
-
-// Left-click = place measurement points OR select existing measurement OR remove shape
-renderer.domElement.addEventListener('click', (event: MouseEvent) => {
-  if (event.button !== 0) return;
-
-  switch (currentMode) {
-    case AppMode.Moving:
-      return; // DragControls handles it
-
-    case AppMode.Removing: {
-      setRaycasterFromEvent(event);
-      const intersects = raycaster.intersectObjects(scene.children, true);
-      for (const hit of intersects) {
-        if (isMeasurementObject(hit.object)) continue;
-        if (hit.object === groundPlane) continue;
-        const target = hit.object as THREE.Mesh;
-        invalidateVertexCache(target);
-        removeFigure(target);
-        updateStatus();
-        break;
-      }
-      return;
-    }
-
-    case AppMode.Measuring: {
-      const point = getWorldPosition(event);
-      if (point) {
-        measurementSystem.handleClick(point);
-        updateStatus();
-      }
-      return;
-    }
-
-    default: {
-      // Idle → try to select a measurement line
-      setRaycasterFromEvent(event);
-      measurementSystem.selectMeasurementAt(raycaster);
-      updateStatus();
-    }
-  }
-});
-
-renderer.domElement.addEventListener('mousemove', throttle((event: MouseEvent) => {
-  if (currentMode !== AppMode.Measuring) return;
-
-  const point = getWorldPosition(event);
-  if (point) {
-    measurementSystem.handleMouseMove(point);
-  }
-}, 16));
-
-// ─── Keyboard Events ────────────────────────────────────────────────────────
-window.addEventListener('keydown', (event: KeyboardEvent) => {
-  const key = event.key.toLowerCase();
-
-  // Undo Shape Deletion
-  if (key === 'z' && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault();
-    if (canUndo()) {
-      const restoredMesh = undoRemoveFigure();
-      if (restoredMesh) invalidateVertexCache(restoredMesh);
-      updateStatus();
-    }
-    return;
-  }
-
-  if (key === 'escape') {
-    if (measurementSystem.measuring) {
-      measurementSystem.cancelMeasurement();
-    } else if (measurementSystem.hasSelection) {
-      measurementSystem.deselectMeasurement();
-    }
-    updateStatus();
-    return;
-  }
-
-  // Selection shortcuts (work when NOT in measure mode)
-  if (!measurementSystem.measuring) {
-    if (key === 'e' && measurementSystem.hasSelection) {
-      measurementSystem.eraseSelected();
-      updateStatus();
-      return;
-    }
-    if (key === 'm' && measurementSystem.hasSelection) {
-      measurementSystem.changeUnitSelected();
-      updateStatus();
-      return;
-    }
-    if (key === 'c') {
-      measurementSystem.cycleGlobalUnit();
-      updateStatus();
-      return;
-    }
-  }
-});
-
-// ─── UI Controls ─────────────────────────────────────────────────────────────
+// ─── UI Event Bindings ───────────────────────────────────────────────────────
 const measureBtn = document.getElementById('measure-btn')!;
 const clearBtn = document.getElementById('clear-btn')!;
 const removeShapeBtn = document.getElementById('remove-shape-btn')!;
 const moveShapeBtn = document.getElementById('move-shape-btn')!;
-const statusEl = document.getElementById('status')!;
-const countEl = document.getElementById('count')!;
-const instructionEl = document.getElementById('instruction')!;
-const unitEl = document.getElementById('unit-display')!;
-const unitLabelEl = document.getElementById('unit-label') as HTMLElement | null;
-const selectionInfoEl = document.getElementById('selection-info')!;
 const undoShapeBtn = document.getElementById('undo-shape-btn') as HTMLButtonElement;
-const recordsBody = document.getElementById('records-body')!;
-const recordsCountEl = document.getElementById('records-count')!;
-const recordsEmptyEl = document.getElementById('records-empty')!;
 const addFigureDropdown = document.querySelector<HTMLDivElement>('.dropdown');
 const unitBadge = document.getElementById('unit-badge') as HTMLDivElement | null;
 const unitToggle = document.getElementById('unit-dropdown-toggle') as HTMLButtonElement | null;
 const unitMenu = document.getElementById('unit-dropdown-menu') as HTMLDivElement | null;
 
-measureBtn.addEventListener('click', () => setMode(AppMode.Measuring));
-removeShapeBtn.addEventListener('click', () => setMode(AppMode.Removing));
-moveShapeBtn.addEventListener('click', () => setMode(AppMode.Moving));
-
-undoShapeBtn.addEventListener('click', () => {
-  if (canUndo()) {
-    const restoredMesh = undoRemoveFigure();
-    if (restoredMesh) invalidateVertexCache(restoredMesh);
-    updateStatus();
-  }
+// Mode toggle buttons
+measureBtn.addEventListener('click', () => {
+  eventBus.emit('mode:toggle', { mode: 'measuring' });
 });
 
+removeShapeBtn.addEventListener('click', () => {
+  eventBus.emit('mode:toggle', { mode: 'removing' });
+});
+
+moveShapeBtn.addEventListener('click', () => {
+  eventBus.emit('mode:toggle', { mode: 'moving' });
+});
+
+// Clear all measurements
 clearBtn.addEventListener('click', () => {
-  measurementSystem.clearAll();
-  updateStatus();
+  eventBus.emit('measure:clear-all', {});
 });
 
+// Undo shape removal
+undoShapeBtn.addEventListener('click', () => {
+  eventBus.emit('shape:undo', {});
+});
+
+// Add figure dropdown
 if (addFigureDropdown) {
   const addFigureToggle = addFigureDropdown.querySelector<HTMLButtonElement>('.btn-add');
   if (addFigureToggle) {
@@ -288,6 +95,19 @@ if (addFigureDropdown) {
   });
 }
 
+// Add shape buttons
+const figureTypes: ShapeType[] = ['box', 'sphere', 'cylinder', 'cone', 'torus'];
+figureTypes.forEach((type) => {
+  const btn = document.getElementById(`add-${type}`);
+  if (btn) {
+    btn.addEventListener('click', () => {
+      eventBus.emit('shape:add', { type });
+      addFigureDropdown?.classList.remove('open');
+    });
+  }
+});
+
+// Unit dropdown
 if (unitBadge && unitToggle && unitMenu) {
   const UNIT_LABEL_MAP: Record<string, string> = {
     m: 'meters',
@@ -296,6 +116,8 @@ if (unitBadge && unitToggle && unitMenu) {
     in: 'inches',
   };
 
+  const measuringSystem = world.getSystem<MeasuringSystem>('MeasuringSystem');
+
   const renderUnitMenu = (): void => {
     unitMenu.innerHTML = '';
     UNIT_ORDER.forEach((unit) => {
@@ -303,13 +125,12 @@ if (unitBadge && unitToggle && unitMenu) {
       option.type = 'button';
       option.className = 'unit-option';
       option.innerHTML = `<span>${unit.toUpperCase()}</span><small>${UNIT_LABEL_MAP[unit]}</small>`;
-      if (unit === measurementSystem.unit) {
+      if (measuringSystem && unit === measuringSystem.unit) {
         option.classList.add('active');
       }
       option.addEventListener('click', () => {
-        measurementSystem.setGlobalUnit(unit);
+        eventBus.emit('measure:set-unit', { unit });
         unitBadge.classList.remove('open');
-        updateStatus();
       });
       unitMenu.appendChild(option);
     });
@@ -333,119 +154,34 @@ if (unitBadge && unitToggle && unitMenu) {
   });
 }
 
-// ─── Add Figure Buttons ──────────────────────────────────────────────────────
-const figureTypes: FigureType[] = ['box', 'sphere', 'cylinder', 'cone', 'torus'];
+// ─── Animation Loop ──────────────────────────────────────────────────────────
+function animate(): void {
+  requestAnimationFrame(animate);
 
-figureTypes.forEach((type) => {
-  const btn = document.getElementById(`add-${type}`);
-  if (btn) {
-    btn.addEventListener('click', () => {
-      const mesh = addFigure(type);
-      invalidateVertexCache(mesh);
-      addFigureDropdown?.classList.remove('open');
-    });
-  }
-});
+  // Update ECS World (runs all systems)
+  world.update();
 
-// ─── Records Table ───────────────────────────────────────────────────────────
-function updateRecordsTable(): void {
-  const records = measurementSystem.getMeasurementRecords();
-  const selectedId = measurementSystem.selectedMeasurementId;
+  // Update orbit controls
+  controls.update();
 
-  recordsCountEl.textContent = `${records.length}`;
-  recordsEmptyEl.style.display = records.length === 0 ? 'block' : 'none';
-
-  // Clear existing rows
-  recordsBody.innerHTML = '';
-
-  for (const rec of records) {
-    const tr = document.createElement('tr');
-    if (rec.id === selectedId) tr.classList.add('row-selected');
-
-    // Row click → select measurement in 3D
-    tr.addEventListener('click', () => {
-      measurementSystem.selectMeasurement(rec.id);
-      updateStatus();
-    });
-
-    tr.innerHTML = `
-      <td data-label="#">${rec.index}</td>
-      <td data-label="From"><span class="shape-tag">${rec.startShape}</span></td>
-      <td data-label="To"><span class="shape-tag">${rec.endShape}</span></td>
-      <td data-label="Distance"><span class="dist-value">${rec.formattedDistance}</span></td>
-      <td data-label="Actions"></td>
-    `;
-
-    // Delete button (last cell)
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'row-delete-btn';
-    deleteBtn.textContent = '\u2716';
-    deleteBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      measurementSystem.removeMeasurement(rec.id);
-      updateStatus();
-    });
-    tr.lastElementChild!.appendChild(deleteBtn);
-
-    recordsBody.appendChild(tr);
-  }
+  // Render scene
+  renderer.render(scene, camera);
 }
 
-// ─── Status Update ───────────────────────────────────────────────────────────
-function updateStatus(): void {
-  countEl.textContent = `${measurementSystem.measurementCount}`;
-  unitEl.textContent = measurementSystem.unit.toUpperCase();
-
-  // Keep the full unit label in sync
-  const UNIT_FULL_LABELS: Record<string, string> = { m: 'Meters', cm: 'Centimeters', ft: 'Feet', in: 'Inches' };
-  if (unitLabelEl) {
-    unitLabelEl.textContent = UNIT_FULL_LABELS[measurementSystem.unit] ?? measurementSystem.unit;
-  }
-  updateRecordsTable();
-  
-  undoShapeBtn.disabled = !canUndo();
-
-  const showSelection = currentMode === AppMode.Idle && measurementSystem.hasSelection;
-  selectionInfoEl.style.display = showSelection ? 'flex' : 'none';
-
-  switch (currentMode) {
-    case AppMode.Removing:
-      statusEl.textContent = 'Removing Shapes';
-      statusEl.className = 'status-badge measuring';
-      instructionEl.textContent = 'Click on any shape to delete it from the scene';
-      break;
-
-    case AppMode.Moving:
-      statusEl.textContent = 'Moving Shapes';
-      statusEl.className = 'status-badge moving';
-      instructionEl.textContent = 'Click and drag any shape to move it';
-      break;
-
-    case AppMode.Measuring:
-      if (measurementSystem.measuring) {
-        statusEl.textContent = 'Click second point';
-        statusEl.className = 'status-badge measuring';
-        instructionEl.textContent = 'Click to set endpoint • ESC to cancel';
-      } else {
-        statusEl.textContent = 'Ready';
-        statusEl.className = 'status-badge active';
-        instructionEl.textContent = 'Click on shapes or grid to start measuring';
-      }
-      break;
-
-    default: // Idle
-      if (measurementSystem.hasSelection) {
-        statusEl.textContent = 'Selected';
-        statusEl.className = 'status-badge selected';
-        instructionEl.textContent = 'E = erase • M = change unit • ESC = deselect';
-      } else {
-        statusEl.textContent = 'Idle';
-        statusEl.className = 'status-badge inactive';
-        instructionEl.textContent = 'Click "Measure" to start • Click a line to select';
-      }
-  }
+// ─── Initial UI Update ───────────────────────────────────────────────────────
+const uiSystem = world.getSystem<UISystem>('UISystem');
+if (uiSystem) {
+  uiSystem.updateAll();
 }
 
-// ─── Boot ────────────────────────────────────────────────────────────────────
-updateStatus();
+// ─── Debug: Log world state (development only) ───────────────────────────────
+if (import.meta.env.DEV) {
+  console.log('🎮 ECS World initialized');
+  world.logState();
+
+  // Expose world for debugging in console
+  (window as unknown as { ecsWorld: World }).ecsWorld = world;
+}
+
+// ─── Start Application ───────────────────────────────────────────────────────
 animate();
